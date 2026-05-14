@@ -1,10 +1,12 @@
 import amqp from "amqplib";
 import { clientWelcome, commandStatus, getInput, printClientHelp, printQuit } from "../internal/gamelogic/gamelogic.js";
-import { declareAndBind, SimpleQueueType } from "../internal/pubsub/declareandbind.js";
-import { ExchangePerilDirect, PauseKey } from "../internal/routing/routing.js";
+import { declareAndBind, SimpleQueueType, subscribeJSON } from "../internal/pubsub/consume.js";
+import { ArmyMovesPrefix, ExchangePerilDirect, ExchangePerilTopic, PauseKey } from "../internal/routing/routing.js";
 import { GameState } from "../internal/gamelogic/gamestate.js";
 import { commandSpawn } from "../internal/gamelogic/spawn.js";
 import { commandMove } from "../internal/gamelogic/move.js";
+import { handlerMove, handlerPause } from "./handlers.js";
+import { publishJSON } from "../internal/pubsub/publish.js";
 
 async function main() {
   console.log("Starting Peril client...");
@@ -20,7 +22,19 @@ async function main() {
   const username = await clientWelcome();
   const [channel, queue] = await declareAndBind(conn, ExchangePerilDirect, `pause.${username}`, PauseKey, SimpleQueueType.Transient)
 
-  const gameState = new GameState(username)
+  const gameState = new GameState(username);
+  const publishCh = await conn.createConfirmChannel();
+
+  await subscribeJSON(
+    conn,
+    ExchangePerilTopic,
+    `${ArmyMovesPrefix}.${username}`,
+    `${ArmyMovesPrefix}.*`,
+    SimpleQueueType.Transient,
+    handlerMove(gameState),
+  );
+
+  subscribeJSON(conn, ExchangePerilDirect, `pause.${username}`, PauseKey, SimpleQueueType.Transient, handlerPause(gameState));
   while (true) {
     const inputArr = await getInput();
     if (inputArr.length === 0) continue;
@@ -30,7 +44,13 @@ async function main() {
           commandSpawn(gameState, inputArr);
           break;
         case "move":
-          commandMove(gameState, inputArr);
+          const move=commandMove(gameState, inputArr);
+          publishJSON(
+          publishCh,
+          ExchangePerilTopic,
+          `${ArmyMovesPrefix}.${username}`,
+          move,
+        );
           console.log("Move command processed.");
           break;
         case "status":
