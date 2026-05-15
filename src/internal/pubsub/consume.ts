@@ -1,3 +1,4 @@
+import { decode } from "@msgpack/msgpack";
 import amqp, { type Channel } from "amqplib";
 
 export enum SimpleQueueType {
@@ -24,40 +25,47 @@ export async function declareAndBind(
     return [channel, queue];
 }
 
-export async function subscribeJSON<T>(
+export function deserializeJSON<T>(content: Buffer): T {
+  return JSON.parse(content.toString()) as T;
+}
+
+export function deserializeMsgPack<T>(content: Buffer): T {
+  return decode(content) as T;
+}
+
+export async function subscribe<T>(
     conn: amqp.ChannelModel,
     exchange: string,
     queueName: string,
-    key: string,
-    queueType: SimpleQueueType,
-    handler: (data: T) => AckType,
+    routingKey: string,
+    simpleQueueType: SimpleQueueType,
+    handler: (data: T) => Promise<AckType> | AckType,
+    deserializer: (data: Buffer) => T,
 ): Promise<void> {
-    const [channel, queue] = await declareAndBind(conn, exchange, queueName, key, queueType);
-    channel.consume(queue.queue, (msg: amqp.ConsumeMessage | null) => {
+    const [channel, queue] = await declareAndBind(conn, exchange, queueName, routingKey, simpleQueueType);
+    await channel.consume(queue.queue, async (msg: amqp.ConsumeMessage | null) => {
         if (msg) {
-            const content = msg.content.toString();
             let outcome;
             try {
-                const data = JSON.parse(content) as T;
-                outcome = handler(data);
+                const data = deserializer(msg.content)
+                outcome = await handler(data);
+                if (outcome === AckType.Ack) {
+                    channel.ack(msg);
+                    console.log("Message Acknowledged");
+                } else if (outcome === AckType.NackRequeue) {
+                    channel.nack(msg, false, true);
+                    console.log("Message Nacked and Requeued");
+                } else if (outcome === AckType.NackDiscard) {
+                    channel.nack(msg, false, false);
+                    console.log("Message Nacked and Discarded");
+                } else {
+                    console.warn("Handler returned unknown AckType:", outcome);
+                    channel.nack(msg, false, false);
+                    console.log("Message Nacked and Discarded");
+                }
             } catch (err) {
-                console.error("Failed to parse message content as JSON:", err);
+                console.error("Failed to parse message content:", err);
                 channel.nack(msg, false, false);
-            }
-
-            if (outcome === AckType.Ack) {
-                channel.ack(msg);
-                console.log("Message Acknowledged");
-            } else if (outcome === AckType.NackRequeue) {
-                channel.nack(msg, false, true);
-                console.log("Message Nacked and Requeued");
-            } else if (outcome === AckType.NackDiscard) {
-                channel.nack(msg, false, false);
-                console.log("Message Nacked and Discarded");
-            } else {
-                console.warn("Handler returned unknown AckType:", outcome);
-                channel.nack(msg, false, false);
-                console.log("Message Nacked and Discarded");
             }
         }
     });

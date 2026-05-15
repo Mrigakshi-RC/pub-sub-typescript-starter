@@ -2,7 +2,8 @@ import amqp from "amqplib";
 import { publishJSON } from "../internal/pubsub/publish.js";
 import { ExchangePerilDirect, ExchangePerilTopic, GameLogSlug, PauseKey } from "../internal/routing/routing.js";
 import { getInput, printServerHelp } from "../internal/gamelogic/gamelogic.js";
-import { declareAndBind, SimpleQueueType } from "../internal/pubsub/consume.js";
+import { AckType, declareAndBind, deserializeMsgPack, SimpleQueueType, subscribe } from "../internal/pubsub/consume.js";
+import { writeLog, type GameLog } from "../internal/gamelogic/logs.js";
 
 async function main() {
   console.log("Starting Peril server...");
@@ -19,6 +20,16 @@ async function main() {
   });
 
   await declareAndBind(conn, ExchangePerilTopic, GameLogSlug, "game_logs.*", SimpleQueueType.Durable)
+  subscribe(conn, ExchangePerilTopic, GameLogSlug, "game_logs.*", SimpleQueueType.Durable, async (log: GameLog) => {
+    try {
+      writeLog(log);
+      process.stdout.write("> ");
+      return AckType.Ack;
+    } catch (err) {
+      console.error("Error logging message:", err);
+      return AckType.NackRequeue;
+    }
+  }, deserializeMsgPack);
 
   while (true) {
     const inputArr = await getInput();

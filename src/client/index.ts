@@ -1,12 +1,21 @@
 import amqp from "amqplib";
 import { clientWelcome, commandStatus, getInput, printClientHelp, printQuit } from "../internal/gamelogic/gamelogic.js";
-import { declareAndBind, SimpleQueueType, subscribeJSON } from "../internal/pubsub/consume.js";
-import { ArmyMovesPrefix, ExchangePerilDirect, ExchangePerilTopic, PauseKey } from "../internal/routing/routing.js";
+import { declareAndBind, deserializeJSON, SimpleQueueType, subscribe } from "../internal/pubsub/consume.js";
+import { ArmyMovesPrefix, ExchangePerilDirect, ExchangePerilTopic, GameLogSlug, PauseKey, WarRecognitionsPrefix } from "../internal/routing/routing.js";
 import { GameState } from "../internal/gamelogic/gamestate.js";
 import { commandSpawn } from "../internal/gamelogic/spawn.js";
 import { commandMove } from "../internal/gamelogic/move.js";
-import { handlerMove, handlerPause } from "./handlers.js";
-import { publishJSON } from "../internal/pubsub/publish.js";
+import { handlerMove, handlerPause, handlerWar } from "./handlers.js";
+import { publishJSON, publishMsgPack } from "../internal/pubsub/publish.js";
+
+export function publishGameLog (gameState: GameState, publishCh: amqp.ConfirmChannel, message: string) {
+  const gameLog = {
+    username: gameState.getUsername(),
+    message,
+    currentTime: new Date().toISOString(),
+  };
+  publishMsgPack(publishCh, ExchangePerilTopic, `${GameLogSlug}.${gameLog.username}`, gameLog);
+}
 
 async function main() {
   console.log("Starting Peril client...");
@@ -25,16 +34,20 @@ async function main() {
   const gameState = new GameState(username);
   const publishCh = await conn.createConfirmChannel();
 
-  await subscribeJSON(
+  await subscribe(
     conn,
     ExchangePerilTopic,
     `${ArmyMovesPrefix}.${username}`,
     `${ArmyMovesPrefix}.*`,
     SimpleQueueType.Transient,
-    handlerMove(gameState),
+    handlerMove(gameState, publishCh),
+    deserializeJSON
   );
 
-  subscribeJSON(conn, ExchangePerilDirect, `pause.${username}`, PauseKey, SimpleQueueType.Transient, handlerPause(gameState));
+  subscribe(conn, ExchangePerilDirect, `pause.${username}`, PauseKey, SimpleQueueType.Transient, handlerPause(gameState), deserializeJSON);
+
+  subscribe(conn, ExchangePerilTopic, WarRecognitionsPrefix, `${WarRecognitionsPrefix}.*`, SimpleQueueType.Durable, handlerWar(gameState, publishCh), deserializeJSON);
+
   while (true) {
     const inputArr = await getInput();
     if (inputArr.length === 0) continue;
