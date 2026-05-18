@@ -43,6 +43,7 @@ export async function subscribe<T>(
     deserializer: (data: Buffer) => T,
 ): Promise<void> {
     const [channel, queue] = await declareAndBind(conn, exchange, queueName, routingKey, simpleQueueType);
+    await channel.prefetch(10);
     await channel.consume(queue.queue, async (msg: amqp.ConsumeMessage | null) => {
         if (msg) {
             let outcome;

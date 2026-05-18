@@ -11,14 +11,20 @@ const writeToDiskSleep = 1000;
 
 function block(ms: number) {
   const end = Date.now() + ms;
-  while (Date.now() < end) {}
+  while (Date.now() < end) { }
 }
 
 export async function writeLog(gameLog: GameLog): Promise<void> {
   console.log("received game log...");
   block(writeToDiskSleep);
 
-  const date = new Date(gameLog.currentTime);
+  let date = new Date(gameLog.currentTime);
+
+  if (isNaN(date.getTime())) {
+    console.error(`Received invalid date value: ${gameLog.currentTime}`);
+    date = new Date();
+  }
+
   const timestamp = date.toISOString();
   const logEntry = `${timestamp} ${gameLog.username}: ${gameLog.message}\n`;
 

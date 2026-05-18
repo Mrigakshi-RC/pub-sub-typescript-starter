@@ -1,5 +1,5 @@
 import amqp from "amqplib";
-import { clientWelcome, commandStatus, getInput, printClientHelp, printQuit } from "../internal/gamelogic/gamelogic.js";
+import { clientWelcome, commandStatus, getInput, getMaliciousLog, printClientHelp, printQuit } from "../internal/gamelogic/gamelogic.js";
 import { declareAndBind, deserializeJSON, SimpleQueueType, subscribe } from "../internal/pubsub/consume.js";
 import { ArmyMovesPrefix, ExchangePerilDirect, ExchangePerilTopic, GameLogSlug, PauseKey, WarRecognitionsPrefix } from "../internal/routing/routing.js";
 import { GameState } from "../internal/gamelogic/gamestate.js";
@@ -8,7 +8,7 @@ import { commandMove } from "../internal/gamelogic/move.js";
 import { handlerMove, handlerPause, handlerWar } from "./handlers.js";
 import { publishJSON, publishMsgPack } from "../internal/pubsub/publish.js";
 
-export function publishGameLog (gameState: GameState, publishCh: amqp.ConfirmChannel, message: string) {
+export function publishGameLog(gameState: GameState, publishCh: amqp.ConfirmChannel, message: string) {
   const gameLog = {
     username: gameState.getUsername(),
     message,
@@ -57,13 +57,13 @@ async function main() {
           commandSpawn(gameState, inputArr);
           break;
         case "move":
-          const move=commandMove(gameState, inputArr);
+          const move = commandMove(gameState, inputArr);
           publishJSON(
-          publishCh,
-          ExchangePerilTopic,
-          `${ArmyMovesPrefix}.${username}`,
-          move,
-        );
+            publishCh,
+            ExchangePerilTopic,
+            `${ArmyMovesPrefix}.${username}`,
+            move,
+          );
           console.log("Move command processed.");
           break;
         case "status":
@@ -73,7 +73,18 @@ async function main() {
           printClientHelp();
           break;
         case "spam":
-          console.log("Spamming not allowed yet!")
+          if (inputArr.length < 2) {
+            console.log("Usage: spam <number_of_messages>");
+          }
+          else {
+            const n = parseInt(inputArr[1] as string);
+            let count = n;
+            while (count>0){
+              const log=getMaliciousLog();
+              publishMsgPack(publishCh, ExchangePerilTopic, `${GameLogSlug}.${username}`, log);
+              count--;
+            }
+          }
           break;
         case "quit":
           printQuit()
